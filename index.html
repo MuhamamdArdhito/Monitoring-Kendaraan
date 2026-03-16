@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>Dashboard Monitoring Kendaraan IoT</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+
+body{
+background:#f4f6fb;
+font-family:Arial;
+}
+
+#map{
+height:500px;
+border-radius:10px;
+}
+
+.card{
+border:none;
+border-radius:10px;
+box-shadow:0 4px 15px rgba(0,0,0,0.08);
+}
+
+.status-safe{
+color:green;
+font-weight:bold;
+}
+
+.status-warning{
+color:orange;
+font-weight:bold;
+}
+
+.status-danger{
+color:red;
+font-weight:bold;
+}
+
+.chart-container{
+height:250px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<nav class="navbar navbar-dark bg-dark">
+<div class="container-fluid">
+<span class="navbar-brand">
+Monitoring Status Keamanan Kendaraan Berbasis IoT
+</span>
+</div>
+</nav>
+
+<div class="container-fluid mt-3">
+
+<div class="row">
+
+<div class="col-lg-8">
+
+<div class="card">
+
+<div class="card-header">
+<b>Tracking Lokasi Kendaraan</b>
+</div>
+
+<div class="card-body">
+
+<div id="map"></div>
+
+<div class="mt-3">
+
+<button id="startTracking" class="btn btn-success">
+Start Tracking
+</button>
+
+<button id="replayButton" class="btn btn-warning">
+Replay Perjalanan
+</button>
+
+<button id="resetButton" class="btn btn-primary">
+Reset
+</button>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+
+<div class="col-lg-4">
+
+<div class="card mb-3">
+
+<div class="card-header">
+<b>Status Kendaraan</b>
+</div>
+
+<div class="card-body">
+
+<table class="table">
+
+<tr>
+<td>Status Kendaraan</td>
+<td id="vehicleStatus" class="status-safe">AMAN</td>
+</tr>
+
+<tr>
+<td>Status Driver</td>
+<td id="driverStatus">Normal</td>
+</tr>
+
+<tr>
+<td>Kecepatan</td>
+<td><span id="speed">0</span> km/h</td>
+</tr>
+
+<tr>
+<td>Jarak Depan</td>
+<td><span id="distance">0</span> cm</td>
+</tr>
+
+<tr>
+<td>Latitude</td>
+<td id="latitude">0</td>
+</tr>
+
+<tr>
+<td>Longitude</td>
+<td id="longitude">0</td>
+</tr>
+
+<tr>
+<td>MQ2</td>
+<td id="mq2">0</td>
+</tr>
+
+<tr>
+<td>MQ3</td>
+<td id="mq3">0</td>
+</tr>
+
+<tr>
+<td>Gyro</td>
+<td id="gyro">0</td>
+</tr>
+
+</table>
+
+</div>
+
+</div>
+
+<div class="card">
+
+<div class="card-header">
+<b>Alert Kendaraan</b>
+</div>
+
+<div class="card-body">
+
+<ul id="alertList" class="list-group"></ul>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+
+<div class="row mt-3">
+
+<div class="col-lg-6">
+
+<div class="card">
+
+<div class="card-header">
+Grafik Sensor
+</div>
+
+<div class="card-body">
+
+<canvas id="sensorChart"></canvas>
+
+</div>
+
+</div>
+
+</div>
+
+
+<div class="col-lg-6">
+
+<div class="card">
+
+<div class="card-header">
+Grafik Kecepatan
+</div>
+
+<div class="card-body">
+
+<canvas id="speedChart"></canvas>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script>
+
+const CHANNEL_ID="3201296"
+const READ_API="XJHCC7EIEVZ7Q3NQ"
+
+var map=L.map('map').setView([0,0],15)
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+attribution:'OpenStreetMap'
+}).addTo(map)
+
+var marker=L.marker([0,0]).addTo(map)
+
+var polyline=L.polyline([],{
+color:'blue'
+}).addTo(map)
+
+var tracking=false
+
+document.getElementById("startTracking").onclick=function(){
+
+tracking=!tracking
+
+if(tracking){
+this.innerText="Stop Tracking"
+this.classList.remove("btn-success")
+this.classList.add("btn-danger")
+}else{
+this.innerText="Start Tracking"
+this.classList.remove("btn-danger")
+this.classList.add("btn-success")
+}
+
+}
+
+document.getElementById("resetButton").onclick=function(){
+
+polyline.setLatLngs([])
+
+}
+
+document.getElementById("replayButton").onclick=function(){
+
+fetch(`https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?results=50&api_key=${READ_API}`)
+
+.then(res=>res.json())
+
+.then(data=>{
+
+polyline.setLatLngs([])
+
+let feeds=data.feeds
+
+let i=0
+
+let replay=setInterval(()=>{
+
+if(i>=feeds.length){
+clearInterval(replay)
+return
+}
+
+let lat=parseFloat(feeds[i].field2)
+let lon=parseFloat(feeds[i].field3)
+
+marker.setLatLng([lat,lon])
+
+polyline.addLatLng([lat,lon])
+
+map.panTo([lat,lon])
+
+i++
+
+},1000)
+
+})
+
+}
+
+const sensorChart=new Chart(
+document.getElementById('sensorChart'),
+{
+type:'line',
+data:{
+labels:[],
+datasets:[
+{
+label:'MQ2',
+data:[],
+borderColor:'blue'
+},
+{
+label:'MQ3',
+data:[],
+borderColor:'red'
+},
+{
+label:'Gyro',
+data:[],
+borderColor:'green'
+}
+]
+}
+})
+
+const speedChart=new Chart(
+document.getElementById('speedChart'),
+{
+type:'line',
+data:{
+labels:[],
+datasets:[
+{
+label:'Speed',
+data:[],
+borderColor:'orange'
+}
+]
+}
+})
+
+function cekAlert(distance,mq2,mq3,gyro,speed,drowsy){
+
+let alerts=[]
+
+if(drowsy==1)
+alerts.push("Driver Mengantuk")
+
+if(mq2>300)
+alerts.push("Driver Merokok")
+
+if(mq3>300)
+alerts.push("Alkohol Terdeteksi Dikonsumsi")
+
+if(distance<20)
+alerts.push("Terjadi Benturan Kendaraan")
+
+if(gyro>2)
+alerts.push("Mobil Terguling")
+
+if(speed>80)
+alerts.push("Melebihi Batas Kecepatan")
+
+return alerts
+
+}
+
+function updateCharts(label,mq2,mq3,gyro,speed){
+
+if(sensorChart.data.labels.length>20){
+
+sensorChart.data.labels.shift()
+
+sensorChart.data.datasets.forEach(d=>d.data.shift())
+
+}
+
+sensorChart.data.labels.push(label)
+
+sensorChart.data.datasets[0].data.push(mq2)
+
+sensorChart.data.datasets[1].data.push(mq3)
+
+sensorChart.data.datasets[2].data.push(gyro)
+
+sensorChart.update()
+
+if(speedChart.data.labels.length>20){
+
+speedChart.data.labels.shift()
+
+speedChart.data.datasets[0].data.shift()
+
+}
+
+speedChart.data.labels.push(label)
+
+speedChart.data.datasets[0].data.push(speed)
+
+speedChart.update()
+
+}
+
+function fetchData(){
+
+fetch(`https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds/last.json?api_key=${READ_API}`)
+
+.then(res=>res.json())
+
+.then(data=>{
+
+var distance=parseFloat(data.field1)
+var lat=parseFloat(data.field2)
+var lon=parseFloat(data.field3)
+var mq2=parseFloat(data.field4)
+var mq3=parseFloat(data.field5)
+var gyro=parseFloat(data.field6)
+var speed=parseFloat(data.field7)
+var drowsy=parseFloat(data.field8)
+
+var time=data.created_at
+
+document.getElementById("distance").innerText=distance.toFixed(1)
+document.getElementById("latitude").innerText=lat.toFixed(6)
+document.getElementById("longitude").innerText=lon.toFixed(6)
+document.getElementById("mq2").innerText=mq2.toFixed(1)
+document.getElementById("mq3").innerText=mq3.toFixed(1)
+document.getElementById("gyro").innerText=gyro.toFixed(2)
+document.getElementById("speed").innerText=speed.toFixed(1)
+
+if(drowsy==1)
+document.getElementById("driverStatus").innerText="Mengantuk"
+else
+document.getElementById("driverStatus").innerText="Normal"
+
+var alerts=cekAlert(distance,mq2,mq3,gyro,speed,drowsy)
+
+var alertBox=document.getElementById("alertList")
+
+alertBox.innerHTML=""
+
+if(alerts.length==0){
+
+let li=document.createElement("li")
+
+li.className="list-group-item text-success"
+
+li.innerText="Tidak ada peringatan"
+
+alertBox.appendChild(li)
+
+document.getElementById("vehicleStatus").innerText="AMAN"
+
+document.getElementById("vehicleStatus").className="status-safe"
+
+}else{
+
+alerts.forEach(a=>{
+
+let li=document.createElement("li")
+
+li.className="list-group-item text-danger"
+
+li.innerText=a
+
+alertBox.appendChild(li)
+
+})
+
+document.getElementById("vehicleStatus").innerText="PERINGATAN"
+
+document.getElementById("vehicleStatus").className="status-warning"
+
+}
+
+marker.setLatLng([lat,lon])
+
+map.panTo([lat,lon])
+
+if(tracking){
+polyline.addLatLng([lat,lon])
+}
+
+updateCharts(time,mq2,mq3,gyro,speed)
+
+})
+
+}
+
+fetchData()
+
+setInterval(fetchData,5000)
+
+</script>
+
+</body>
+</html>
